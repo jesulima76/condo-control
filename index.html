@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GestiÃ³n de Cuotas y Cobranzas - Condominio</title>
+  
+  <!-- Google Fonts: Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Firebase Compat CDN (v10.12.0) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#f0f7ff',
+              100: '#e0effe',
+              200: '#bae0fd',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+              800: '#0c4a6e',
+              900: '#082f49',
+            }
+          },
+          boxShadow: {
+            'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.07)',
+            'card': '0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.03)',
+            'glow-blue': '0 0 20px -5px rgba(2, 132, 199, 0.4)',
+            'glow-emerald': '0 0 20px -5px rgba(16, 185, 129, 0.4)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [v-cloak] { display: none; }
+    body {
+      background-color: #f8fafc;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(2, 132, 199, 0.05) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(99, 102, 241, 0.04) 0px, transparent 50%);
+      background-attachment: fixed;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .glass-header {
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .kpi-card {
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.08);
+    }
+  </style>
+</head>
+<body class="text-slate-800 min-h-screen font-sans flex flex-col antialiased">
+
+  <!-- Header Premium -->
+  <header class="glass-header border-b border-slate-200/80 sticky top-0 z-30 transition-all">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+      
+      <!-- Brand Logo y TÃ­tulo -->
+      <div class="flex items-center space-x-3.5">
+        <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-sky-600 via-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/25 ring-4 ring-blue-50">
+          <i data-lucide="building-2" class="w-6 h-6 stroke-[2.2]"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="font-extrabold text-slate-900 text-lg sm:text-xl tracking-tight leading-none">CondoControl</h1>
+            <span class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-sm">Torre 7</span>
+          </div>
+          <p class="text-xs text-slate-500 font-medium mt-1">GestiÃ³n de Cobranzas Multidivisa & Tasa BCV</p>
+        </div>
+      </div>
+
+      <!-- Quick Tasa BCV Widget -->
+      <div class="flex items-center space-x-3">
+        <div class="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-300/60 rounded-2xl p-1.5 sm:pr-4 flex items-center space-x-2.5 shadow-sm">
+          <div class="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/30">
+            <i data-lucide="trending-up" class="w-5 h-5 stroke-[2.5]"></i>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase font-bold text-amber-700 tracking-wider">TASA OFICIAL BCV</div>
+            <div id="header-bcv-rate" class="text-sm sm:text-base font-black text-amber-950 font-mono tracking-tight leading-none mt-0.5">897.54 Bs./$</div>
+          </div>
+        </div>
+        <button id="btn-refresh-rate" title="Consultar Tasa Actualizada" class="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all duration-200">
+          <i data-lucide="refresh-cw" class="w-4 h-4 stroke-[2.2]"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- NavegaciÃ³n por pestaÃ±as estilizada -->
+  <div class="bg-white/70 backdrop-blur-md border-b border-slate-200/80 sticky top-20 z-20">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-2 sm:space-x-4 overflow-x-auto py-2">
+      <button id="tab-btn-jornadas" onclick="switchTab('jornadas')" class="tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center space-x-2 transition-all duration-200 bg-blue-50 text-blue-700 shadow-sm shadow-blue-500/10 border border-blue-200/60">
+        <i data-lucide="layers" class="w-4 h-4"></i>
+        <span>Jornadas y Pagos</span>
+      </button>
+      <button id="tab-btn-apartamentos" onclick="switchTab('apartamentos')" class="tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2 transition-all duration-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100/80">
+        <i data-lucide="home" class="w-4 h-4"></i>
+        <span>Directorio de Residentes</span>
+      </button>
+      <button id="tab-btn-tasas" onclick="switchTab('tasas')" class="tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2 transition-all duration-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100/80">
+        <i data-lucide="history" class="w-4 h-4"></i>
+        <span>Historial de Tasas</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Contenedor Principal -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
+
+    <!-- SECCIÃ“N: JORNADAS Y RECAUDACIÃ“N -->
+    <section id="tab-jornadas" class="space-y-6">
+
+      <!-- Panel Superior: Selector de Jornada Activa y Acciones -->
+      <div class="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-5 relative overflow-hidden">
+        <div class="absolute -right-10 -bottom-10 w-44 h-44 bg-blue-500/5 rounded-full blur-2xl pointer-events-none"></div>
+
+        <div class="flex-1 max-w-lg">
+          <div class="flex items-center space-x-2 mb-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">CampaÃ±a / Jornada en Curso</label>
+          </div>
+          <div class="relative">
+            <select id="select-jornada" class="w-full bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-2xl px-4 py-3 text-slate-900 font-bold text-sm sm:text-base focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none transition-all cursor-pointer">
+              <!-- Opciones dinÃ¡micas -->
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-3">
+          <button onclick="openModalNuevaJornada()" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold px-5 py-3 rounded-2xl shadow-md shadow-blue-500/25 hover:shadow-lg hover:shadow-blue-500/35 flex items-center space-x-2 text-sm transition-all duration-200">
+            <i data-lucide="plus-circle" class="w-4 h-4 stroke-[2.5]"></i>
+            <span>Nueva Jornada</span>
+          </button>
+          <button onclick="openModalEditarJornada()" class="bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-bold p-3 rounded-2xl border border-slate-200/80 transition-all shadow-sm" title="Editar parÃ¡metros de la jornada">
+            <i data-lucide="sliders" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tarjetas de Resumen Financiero Modernizadas (KPIs) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+        
+        <!-- Tarjeta 1: Presupuesto Proveedor -->
+        <div class="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-card kpi-card relative overflow-hidden group">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Meta / Factura Proveedor</p>
+              <h3 id="stat-presupuesto" class="text-3xl font-black text-slate-900 mt-1 tracking-tight font-mono">$0.00</h3>
+            </div>
+            <div class="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center shadow-inner">
+              <i data-lucide="receipt" class="w-6 h-6 stroke-[2.2]"></i>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center justify-between text-xs border-t border-slate-100 pt-3">
+            <span class="text-slate-400 font-medium">Cuota Fijada:</span>
+            <span id="stat-cuota-cobrada" class="font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg">$0.00 / apto</span>
+          </div>
+        </div>
+
+        <!-- Tarjeta 2: Recaudado en BolÃ­vares -->
+        <div class="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-card kpi-card relative overflow-hidden group">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Recaudado (Bs.)</p>
+              <h3 id="stat-recaudado-bs" class="text-2xl sm:text-[26px] font-black text-emerald-600 mt-1 tracking-tight font-mono truncate">Bs. 0,00</h3>
+            </div>
+            <div class="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center shadow-inner">
+              <i data-lucide="coins" class="w-6 h-6 stroke-[2.2]"></i>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center justify-between text-xs border-t border-slate-100 pt-3">
+            <span class="text-slate-400 font-medium">Tasa de Cierre:</span>
+            <span id="stat-tasa-cierre" class="font-extrabold text-slate-800 font-mono">0.00 Bs./$</span>
+          </div>
+        </div>
+
+        <!-- Tarjeta 3: Equivalente Real en $ -->
+        <div class="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-card kpi-card relative overflow-hidden group">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Equivalente Real ($)</p>
+              <h3 id="stat-recaudado-usd" class="text-3xl font-black text-indigo-600 mt-1 tracking-tight font-mono">$0.00</h3>
+            </div>
+            <div class="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center shadow-inner">
+              <i data-lucide="badge-dollar-sign" class="w-6 h-6 stroke-[2.2]"></i>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center justify-between text-xs border-t border-slate-100 pt-3">
+            <span class="text-slate-400 font-medium">Diferencia / Balance:</span>
+            <span id="stat-superavit" class="font-extrabold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">+$0.00</span>
+          </div>
+        </div>
+
+        <!-- Tarjeta 4: Progreso de Cobro -->
+        <div class="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-card kpi-card relative overflow-hidden group">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Solvencia de la Torre</p>
+              <h3 id="stat-avance-cobro" class="text-3xl font-black text-slate-900 mt-1 tracking-tight">0 / 0</h3>
+            </div>
+            <div class="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center shadow-inner">
+              <i data-lucide="pie-chart" class="w-6 h-6 stroke-[2.2]"></i>
+            </div>
+          </div>
+          <!-- Barra de progreso moderna -->
+          <div class="w-full bg-slate-100 rounded-full h-2.5 mt-4 overflow-hidden p-0.5">
+            <div id="stat-progreso-barra" class="bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500 h-full rounded-full transition-all duration-700 shadow-sm" style="width: 0%"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Tabla Principal de Propietarios y Pagos -->
+      <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card overflow-hidden">
+        
+        <!-- Cabecera de la tabla -->
+        <div class="p-5 sm:p-6 border-b border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-b from-white to-slate-50/50">
+          <div>
+            <h2 class="text-lg font-black text-slate-900 tracking-tight flex items-center space-x-2">
+              <span>Estado de Cuenta por Apartamento</span>
+              <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600">13 Unidades</span>
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">Haz clic sobre cualquier apartamento para registrar fecha de pago, tasa o comprobante</p>
+          </div>
+          
+          <button onclick="marcarTodosRecordatorio()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center space-x-2 hover:shadow-slate-900/20">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>Copiar Recordatorio WhatsApp</span>
+          </button>
+        </div>
+
+        <!-- Tabla -->
+        <div class="overflow-x-auto custom-scroll">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50/90 text-slate-500 uppercase text-[11px] font-extrabold tracking-wider border-b border-slate-200/80">
+              <tr>
+                <th class="py-4 px-5">Apto</th>
+                <th class="py-4 px-5">Propietario / Residente</th>
+                <th class="py-4 px-5">Fecha Pago</th>
+                <th class="py-4 px-5 text-right">Tasa BCV</th>
+                <th class="py-4 px-5 text-right">Monto ($)</th>
+                <th class="py-4 px-5 text-right">Pagado (Bs.)</th>
+                <th class="py-4 px-5 text-right">Equiv. ($ Real)</th>
+                <th class="py-4 px-5 text-center">Estado</th>
+                <th class="py-4 px-5 text-center">Comprobante</th>
+                <th class="py-4 px-5 text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-pagos-body" class="divide-y divide-slate-100 text-slate-700">
+              <!-- Filas dinÃ¡micas generadas en JavaScript -->
+            </tbody>
+            <tfoot class="bg-slate-50/95 font-bold border-t-2 border-slate-200 text-slate-900">
+              <tr>
+                <td class="py-4 px-5 uppercase text-xs tracking-wider" colspan="4">Totales RecaudaciÃ³n</td>
+                <td id="total-fijado-usd" class="py-4 px-5 text-right font-mono font-bold">$0.00</td>
+                <td id="total-pagado-bs" class="py-4 px-5 text-right text-emerald-600 font-mono font-black text-base">Bs. 0,00</td>
+                <td id="total-real-usd" class="py-4 px-5 text-right text-indigo-600 font-mono font-black text-base">$0.00</td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- SECCIÃ“N: DIRECTORIO DE APARTAMENTOS -->
+    <section id="tab-apartamentos" class="hidden space-y-6">
+      <div class="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-card flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 class="text-lg font-black text-slate-900 tracking-tight">Directorio Oficial de Propietarios</h2>
+          <p class="text-xs text-slate-500 mt-0.5">Control y registro de residentes para la asignaciÃ³n de cuotas de la torre.</p>
+        </div>
+        <button onclick="openModalNuevoApartamento()" class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold px-4 py-2.5 rounded-2xl shadow-sm text-sm flex items-center space-x-2">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          <span>Agregar Apartamento</span>
+        </button>
+      </div>
+
+      <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50/90 text-slate-500 uppercase text-[11px] font-extrabold tracking-wider border-b border-slate-200/80">
+              <tr>
+                <th class="py-4 px-5">Apto</th>
+                <th class="py-4 px-5">Propietario / Residente</th>
+                <th class="py-4 px-5">TelÃ©fono / WhatsApp</th>
+                <th class="py-4 px-5">Correo</th>
+                <th class="py-4 px-5 text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-directorio-body" class="divide-y divide-slate-100">
+              <!-- Residentes dinÃ¡micos -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECCIÃ“N: HISTORIAL DE TASAS BCV -->
+    <section id="tab-tasas" class="hidden space-y-6">
+      <div class="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-card flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 class="text-lg font-black text-slate-900 tracking-tight">Historial Oficial de Tasas BCV</h2>
+          <p class="text-xs text-slate-500 mt-0.5">Tasas de cambio oficiales registradas segÃºn las fechas de los comprobantes.</p>
+        </div>
+        <button onclick="openModalNuevaTasa()" class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold px-4 py-2.5 rounded-2xl shadow-sm text-sm flex items-center space-x-2">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          <span>Registrar / Ajustar Tasa</span>
+        </button>
+      </div>
+
+      <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card overflow-hidden max-w-3xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50/90 text-slate-500 uppercase text-[11px] font-extrabold tracking-wider border-b border-slate-200/80">
+              <tr>
+                <th class="py-4 px-5">Fecha</th>
+                <th class="py-4 px-5 text-right">Tasa Oficial (Bs. / USD)</th>
+                <th class="py-4 px-5 text-center">Origen</th>
+                <th class="py-4 px-5 text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-tasas-body" class="divide-y divide-slate-100">
+              <!-- Tasas dinÃ¡micas -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: REGISTRAR / EDITAR PAGO DE RESIDENTE -->
+  <div id="modal-pago" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      
+      <div class="bg-gradient-to-r from-slate-900 to-slate-800 px-6 py-5 text-white flex justify-between items-center">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
+            <i data-lucide="receipt-check" class="w-5 h-5 text-sky-400"></i>
+          </div>
+          <div>
+            <h3 class="font-extrabold text-base" id="modal-pago-titulo">Registrar Pago - Apto 07-11</h3>
+            <p class="text-xs text-slate-300 font-medium" id="modal-pago-subtitulo">LUIS F. MARQUEZ</p>
+          </div>
+        </div>
+        <button onclick="closeModalPago()" class="text-slate-400 hover:text-white p-1.5 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="form-pago" onsubmit="guardarPago(event)" class="p-6 space-y-4">
+        <input type="hidden" id="pago-apto-id">
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Monto Fijado ($)</label>
+            <input type="number" step="0.01" id="pago-monto-usd" readonly class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-slate-700 font-bold font-mono focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Estado de Pago</label>
+            <select id="pago-estado" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-bold focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+              <option value="PENDIENTE">PENDIENTE</option>
+              <option value="PAGADO">PAGADO</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Fecha de Pago y Tasa BCV -->
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Fecha del Pago *</label>
+            <input type="date" id="pago-fecha" onchange="actualizarTasaPorFecha()" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-medium focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Tasa BCV del DÃ­a (Bs.) *</label>
+            <input type="number" step="0.01" id="pago-tasa-bcv" oninput="calcularMontoBsSugerido()" placeholder="Ej: 897.54" required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-black font-mono focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+          </div>
+        </div>
+
+        <!-- Monto en BolÃ­vares y Equivalente Real -->
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Monto Pagado (Bs.) *</label>
+            <input type="number" step="0.01" id="pago-monto-bs" oninput="calcularEquivalenteUsdReal()" placeholder="0.00" class="w-full bg-emerald-50/50 border border-emerald-300 rounded-xl px-3.5 py-2.5 text-emerald-700 font-black font-mono text-base focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Equiv. Real ($)</label>
+            <input type="number" step="0.01" id="pago-real-usd" readonly class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-indigo-700 font-black font-mono text-base focus:outline-none">
+          </div>
+        </div>
+
+        <!-- MÃ©todo / Referencia Bancaria -->
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">MÃ©todo / Referencia Bancaria</label>
+          <input type="text" id="pago-referencia" placeholder="Ej: Pago MÃ³vil Banesco #9872" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-800 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+
+        <!-- Carga de Comprobante -->
+        <div class="space-y-2">
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase">Comprobante de Pago (Captura)</label>
+          <div class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-2xl p-4 text-center transition cursor-pointer relative bg-slate-50/60" onclick="document.getElementById('pago-comprobante-file').click()">
+            <input type="file" id="pago-comprobante-file" accept="image/*,application/pdf" onchange="previewComprobante(event)" class="hidden">
+            <div id="comprobante-upload-prompt" class="space-y-1">
+              <i data-lucide="upload-cloud" class="w-7 h-7 text-slate-400 mx-auto"></i>
+              <p class="text-xs text-slate-700 font-bold">Haz clic para adjuntar comprobante</p>
+              <p class="text-[10px] text-slate-400">Captura de Pago MÃ³vil o Transferencia (PNG, JPG o PDF)</p>
+            </div>
+            <div id="comprobante-preview-box" class="hidden flex items-center justify-center space-x-3">
+              <img id="comprobante-preview-img" class="h-16 w-16 object-cover rounded-xl border border-slate-200 shadow-sm" src="" alt="Comprobante">
+              <div class="text-left">
+                <p id="comprobante-file-name" class="text-xs font-bold text-slate-800 truncate max-w-[200px]"></p>
+                <p class="text-[10px] text-emerald-600 font-bold">Comprobante listo para guardar</p>
+              </div>
+            </div>
+          </div>
+          <div id="comprobante-actual-link" class="hidden text-xs">
+            <a id="link-ver-comprobante" href="#" target="_blank" class="text-blue-600 hover:underline flex items-center space-x-1 font-bold">
+              <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+              <span>Ver comprobante actual cargado</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
+          <!-- BotÃ³n Revertir Pago -->
+          <button type="button" id="btn-revertir-pago" onclick="revertirPagoActual()" class="hidden px-3.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition flex items-center space-x-1.5 border border-rose-200">
+            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+            <span>Revertir Pago</span>
+          </button>
+
+          <div class="flex items-center space-x-2 ml-auto">
+            <button type="button" onclick="closeModalPago()" class="px-4 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition">Cancelar</button>
+            <button type="submit" id="btn-guardar-pago" class="px-5 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl shadow-md shadow-blue-500/25 transition">
+              <span>Guardar Pago</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: NUEVA / EDITAR JORNADA -->
+  <div id="modal-jornada" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      
+      <div class="bg-gradient-to-r from-slate-900 to-slate-800 px-6 py-5 text-white flex justify-between items-center">
+        <h3 class="font-extrabold text-base" id="modal-jornada-titulo">Crear Nueva Jornada de RecaudaciÃ³n</h3>
+        <button onclick="closeModalJornada()" class="text-slate-400 hover:text-white p-1.5 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="form-jornada" onsubmit="guardarJornada(event)" class="p-6 space-y-4">
+        <input type="hidden" id="jornada-id">
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Nombre / Concepto de la Jornada *</label>
+          <input type="text" id="jornada-nombre" placeholder="Ej: Bolsas de Basura, Poda de Ãreas Comunes, etc." required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Monto Factura Proveedor ($) *</label>
+            <input type="number" step="0.01" id="jornada-monto-factura" oninput="recalcularCuotaJornadaModal()" placeholder="55.00" required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-black font-mono focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">NÂº Apartamentos</label>
+            <input type="number" id="jornada-num-aptos" readonly class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-slate-600 font-bold focus:outline-none">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Margen ProtecciÃ³n (%)</label>
+            <input type="number" step="0.1" id="jornada-margen" oninput="recalcularCuotaJornadaModal()" value="5.0" placeholder="5.0" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-medium focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+            <span class="text-[10px] text-slate-400">ProtecciÃ³n contra devaluaciÃ³n</span>
+          </div>
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Cuota Cobrada por Apto ($)</label>
+            <input type="number" step="0.01" id="jornada-cuota-cobrada" placeholder="4.50" required class="w-full bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-2.5 text-blue-900 font-black font-mono focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+            <span class="text-[10px] text-blue-600">Calculada automÃ¡ticamente o ajustable</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Fecha de Inicio</label>
+            <input type="date" id="jornada-fecha-inicio" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Fecha LÃ­mite de Pago</label>
+            <input type="date" id="jornada-fecha-fin" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex justify-end space-x-2">
+          <button type="button" onclick="closeModalJornada()" class="px-4 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition">Cancelar</button>
+          <button type="submit" class="px-5 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl shadow-md transition">Guardar Jornada</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: REGISTRAR / EDITAR TASA -->
+  <div id="modal-tasa" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div class="bg-gradient-to-r from-slate-900 to-slate-800 px-6 py-5 text-white flex justify-between items-center">
+        <h3 class="font-extrabold text-base">Registrar Tasa BCV</h3>
+        <button onclick="closeModalTasa()" class="text-slate-400 hover:text-white p-1.5 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="form-tasa" onsubmit="guardarTasaManual(event)" class="p-6 space-y-4">
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Fecha</label>
+          <input type="date" id="tasa-fecha" required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Tasa Oficial (Bs. / USD)</label>
+          <input type="number" step="0.0001" id="tasa-valor" placeholder="Ej: 897.54" required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-black font-mono text-lg focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+        <div class="pt-4 border-t border-slate-100 flex justify-end space-x-2">
+          <button type="button" onclick="closeModalTasa()" class="px-4 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition">Cancelar</button>
+          <button type="submit" class="px-5 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl shadow-md transition">Guardar Tasa</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: AGREGAR / EDITAR APARTAMENTO -->
+  <div id="modal-apartamento" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div class="bg-gradient-to-r from-slate-900 to-slate-800 px-6 py-5 text-white flex justify-between items-center">
+        <h3 class="font-extrabold text-base" id="modal-apto-titulo">Agregar Apartamento</h3>
+        <button onclick="closeModalApto()" class="text-slate-400 hover:text-white p-1.5 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="form-apartamento" onsubmit="guardarApartamento(event)" class="p-6 space-y-4">
+        <input type="hidden" id="apto-id">
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">NÃºmero de Apartamento *</label>
+          <input type="text" id="apto-numero" placeholder="Ej: 07-11" required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 font-black text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Nombre Propietario / Residente *</label>
+          <input type="text" id="apto-propietario" placeholder="Ej: LUIS F. MARQUEZ" required class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">TelÃ©fono / WhatsApp</label>
+          <input type="text" id="apto-telefono" placeholder="Ej: 0414-1234567" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-slate-900 text-sm focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 focus:outline-none">
+        </div>
+        <div class="pt-4 border-t border-slate-100 flex justify-end space-x-2">
+          <button type="button" onclick="closeModalApto()" class="px-4 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition">Cancelar</button>
+          <button type="submit" class="px-5 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl shadow-md transition">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- VISOR DE COMPROBANTE GRANDE -->
+  <div id="modal-visor-img" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md hidden flex items-center justify-center p-4" onclick="cerrarVisorImg()">
+    <div class="relative max-w-3xl max-h-[90vh] bg-white rounded-3xl p-3 shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
+      <button onclick="cerrarVisorImg()" class="absolute top-5 right-5 bg-slate-900/70 hover:bg-slate-900 text-white p-2 rounded-full transition shadow-md">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+      <img id="img-ampliada" src="" alt="Comprobante" class="max-h-[85vh] w-auto mx-auto rounded-2xl object-contain shadow-sm">
+    </div>
+  </div>
+
+  <!-- Carga del cÃ³digo JavaScript unificado directamente -->
+  <script src="./app.js"></script>
+
+</body>
+</html>
