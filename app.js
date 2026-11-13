@@ -300,7 +300,7 @@ function renderJornadaActiva() {
           ${apt.numero}
         </span>
       </td>
-      <td class="py-3.5 px-5 font-bold text-slate-800 text-xs sm:text-sm">${apt.propietario}</td>
+      <td class="py-3.5 px-5 font-bold text-slate-800 text-[11px]">${apt.propietario}</td>
       <td class="py-3.5 px-5 text-slate-500 font-mono text-xs">${p.fechaPago || '<span class="text-slate-300 font-sans">—</span>'}</td>
       <td class="py-3.5 px-5 text-right font-mono text-xs font-bold text-slate-600">${p.tasaBCV ? Number(p.tasaBCV).toFixed(2) : '<span class="text-slate-300 font-sans">—</span>'}</td>
       <td class="py-3.5 px-5 text-right font-mono font-bold text-slate-900">${formatUSD(montoFijadoVigente)}</td>
