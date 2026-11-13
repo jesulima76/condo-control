@@ -368,18 +368,14 @@ function renderJornadaActiva() {
   document.getElementById("stat-progreso-barra").style.width = `${pct}%`;
 
   // Totales
-  const tfoot = document.getElementById("tabla-pagos-tfoot");
-  if (tfoot) {
-    tfoot.innerHTML = `
-      <tr class="bg-slate-50/80 border-t-2 border-slate-200">
-        <td colspan="4" class="py-3 px-5 text-xs font-extrabold text-slate-500 uppercase tracking-widest">TOTALES RECAUDACIÓN</td>
-        <td class="py-3 px-5 text-right font-extrabold text-slate-900 font-mono">${formatUSD(totalFijadoUSD)}</td>
-        <td class="py-3 px-5 text-right font-extrabold text-emerald-600 font-mono">${formatBS(totalRecaudadoBS)}</td>
-        <td class="py-3 px-5 text-right font-extrabold text-indigo-600 font-mono">${formatUSD(totalRealUSD)}</td>
-        <td colspan="3"></td>
-      </tr>
-    `;
-  }
+  const elTotalFijado = document.getElementById("total-fijado-usd");
+  if (elTotalFijado) elTotalFijado.textContent = formatUSD(totalFijadoUSD);
+
+  const elTotalPagado = document.getElementById("total-pagado-bs");
+  if (elTotalPagado) elTotalPagado.textContent = formatBS(totalRecaudadoBS);
+
+  const elTotalReal = document.getElementById("total-real-usd");
+  if (elTotalReal) elTotalReal.textContent = formatUSD(totalRealUSD);
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
