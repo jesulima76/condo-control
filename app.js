@@ -1,3 +1,7 @@
+// ==========================================================================
+// CondoControl - Gestión de Cobranzas, Tasa BCV & Notas/Protocolos
+// ==========================================================================
+
 // Configuración de conexión con Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyBLWrf7c-FL7C2xDWERzjnCiRmUX_6flVc",
@@ -8,7 +12,7 @@ const firebaseConfig = {
   appId: "1:980591655193:web:8d8df30e733497ba6fad88"
 };
 
-// Inicializar Firebase Compat (Compatible con doble clic directo a index.html)
+// Inicializar Firebase Compat (Compatible con doble clic local y web)
 let db = null;
 let storage = null;
 
@@ -28,10 +32,13 @@ let jornadasList = [];
 let jornadaActiva = null;
 let apartamentosList = [];
 let tasasHistorial = {};
+let notasList = [];
 let unsubscribeJornada = null;
-let tasaBCVHoy = 897.54;
+let tasaBCVHoy = 911.62;
+let adjuntoNotaModalActual = "";
+let adjuntoNotaTipoActual = "";
 
-// Lista inicial de los 13 apartamentos de la Torre 7 (basado en el Excel)
+// Lista base de los 13 apartamentos de la Torre 7 (según datos del condominio)
 const APARTAMENTOS_INICIALES = [
   { id: "07-11", numero: "07-11", propietario: "LUIS F. MARQUEZ", telefono: "" },
   { id: "07-12", numero: "07-12", propietario: "WILLIAM J. ESCOBAR", telefono: "" },
@@ -48,6 +55,32 @@ const APARTAMENTOS_INICIALES = [
   { id: "07-43", numero: "07-43", propietario: "ALBA COLINA", telefono: "" },
 ];
 
+// Notas iniciales de bienvenida / ejemplo si está vacío
+const NOTAS_INICIALES = [
+  {
+    id: "nota_protocolo_bombas",
+    fecha: "2026-11-10",
+    categoria: "Protocolo",
+    asunto: "Protocolo de Encendido y Apagado de Bombas de Agua",
+    descripcion: "Horario acordado en asamblea: Encendido de 6:00 AM a 8:30 AM y de 6:00 PM a 9:00 PM. No dejar bombas activas si la presión baja de 20 PSI.",
+    adjuntoUrl: "",
+    adjuntoTipo: "",
+    adjuntoNombre: "",
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: "nota_cuota_limpieza",
+    fecha: "2026-11-09",
+    categoria: "Acuerdo",
+    asunto: "Acuerdo Cuota Extraordinaria Limpieza e Implementos",
+    descripcion: "Se aprobó cuota fijada en USD calculada a tasa oficial BCV del día del pago. Los comprobantes deben ser enviados con número de referencia bancaria legible.",
+    adjuntoUrl: "",
+    adjuntoTipo: "",
+    adjuntoNombre: "",
+    createdAt: new Date().toISOString()
+  }
+];
+
 // Formateadores de moneda
 const formatUSD = (num) => `$${(Number(num) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const formatBS = (num) => `Bs. ${(Number(num) || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -57,25 +90,71 @@ const formatBS = (num) => `Bs. ${(Number(num) || 0).toLocaleString('es-VE', { mi
 // ==========================================
 async function fetchTasaBCV() {
   const headerTasaEl = document.getElementById("header-bcv-rate");
-  if (headerTasaEl) headerTasaEl.innerText = `${tasaBCVHoy.toFixed(2)} Bs./$`;
+  const statusEl = document.getElementById("header-bcv-status");
+  const iconRefresh = document.getElementById("icon-refresh-bcv");
 
+  if (iconRefresh) iconRefresh.classList.add("animate-spin");
+  if (statusEl) statusEl.textContent = "Consultando BCV en vivo...";
+
+  let promedio = null;
+
+  // Intento 1: API Directa Oficial
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
+    const timer = setTimeout(() => controller.abort(), 8000);
     const res = await fetch("https://ve.dolarapi.com/v1/dolares/oficial", { signal: controller.signal });
     clearTimeout(timer);
 
     if (res.ok) {
       const data = await res.json();
       if (data && data.promedio) {
-        tasaBCVHoy = Number(data.promedio);
-        if (headerTasaEl) headerTasaEl.innerText = `${tasaBCVHoy.toFixed(2)} Bs./$`;
-        guardarTasaEnMemoriaYFirebase(new Date().toISOString().split('T')[0], tasaBCVHoy, "API Oficial BCV");
+        promedio = Number(data.promedio);
       }
     }
   } catch (err) {
-    console.warn("Consulta API BCV falló o demoró, usando valor de respaldo:", err);
+    console.warn("Intento 1 con DolarAPI oficial falló o demoró:", err);
   }
+
+  // Intento 2: Endpoint general con fallback si el intento 1 falló
+  if (!promedio) {
+    try {
+      const controller2 = new AbortController();
+      const timer2 = setTimeout(() => controller2.abort(), 7000);
+      const res2 = await fetch("https://ve.dolarapi.com/v1/dolares", { signal: controller2.signal });
+      clearTimeout(timer2);
+
+      if (res2.ok) {
+        const arr = await res2.json();
+        if (Array.isArray(arr)) {
+          const itemOficial = arr.find(x => x.fuente === "oficial");
+          if (itemOficial && itemOficial.promedio) {
+            promedio = Number(itemOficial.promedio);
+          }
+        }
+      }
+    } catch (err2) {
+      console.warn("Intento 2 con DolarAPI lista general falló:", err2);
+    }
+  }
+
+  if (promedio && !isNaN(promedio) && promedio > 0) {
+    tasaBCVHoy = promedio;
+    const horaActual = new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+    if (headerTasaEl) headerTasaEl.innerText = `${tasaBCVHoy.toFixed(2)} Bs./$`;
+    if (statusEl) statusEl.textContent = `Oficial BCV • Actualizado ${horaActual}`;
+
+    const fechaHoy = new Date().toISOString().split('T')[0];
+    guardarTasaEnMemoriaYFirebase(fechaHoy, tasaBCVHoy, "API Oficial BCV");
+
+    // Refrescar vistas para que asuman la nueva tasa si aplica
+    if (jornadaActiva) renderJornadaActiva();
+  } else {
+    // Si la red no respondió, mantenemos la última tasa conocida
+    if (headerTasaEl) headerTasaEl.innerText = `${tasaBCVHoy.toFixed(2)} Bs./$`;
+    if (statusEl) statusEl.textContent = "Última tasa registrada • Offline";
+  }
+
+  if (iconRefresh) iconRefresh.classList.remove("animate-spin");
 }
 
 async function guardarTasaEnMemoriaYFirebase(fecha, valor, origen = "Manual") {
@@ -105,10 +184,11 @@ function initApp() {
     try { lucide.createIcons(); } catch (e) {}
   }
 
-  // 1. Mostrar inmediatamente datos en pantalla
+  // 1. Cargar directorio base en pantalla
   apartamentosList = [...APARTAMENTOS_INICIALES];
   renderDirectorioApartamentos();
 
+  // 2. Jornada inicial local con datos completos
   const jornadaLocalInicial = {
     id: "jornada_bolsas_basura_nov_2026",
     nombre: "Bolsas de Basura y Limpieza",
@@ -116,7 +196,7 @@ function initApp() {
     numAptos: 13,
     margenProteccion: 6.2,
     cuotaCobradaPorApto: 4.50,
-    tasaCierreProyectada: 897.54,
+    tasaCierreProyectada: 911.62,
     fechaInicio: "2026-11-09",
     fechaFin: "2026-11-16",
     pagos: {
@@ -130,7 +210,7 @@ function initApp() {
         montoPagadoBS: 4038.93,
         equivalenteUSDReal: 4.50,
         estadoPago: "PAGADO",
-        metodoRef: "",
+        metodoRef: "Pago móvil / 957570410",
         comprobanteUrl: ""
       }
     }
@@ -141,16 +221,36 @@ function initApp() {
   actualizarSelectorJornadas();
   renderJornadaActiva();
 
-  // Historial de tasas inicial
+  // 3. Historial de tasas inicial
   tasasHistorial["2026-11-09"] = 897.54;
+  tasasHistorial["2026-11-13"] = 911.62;
   renderHistorialTasas();
 
-  // 2. Consultar tasa BCV en background sin bloquear
-  try { fetchTasaBCV(); } catch (e) {}
+  // 4. Cargar notas desde localStorage o iniciales
+  try {
+    const notasGuardadas = localStorage.getItem("condo_notas_protocolos");
+    if (notasGuardadas) {
+      notasList = JSON.parse(notasGuardadas);
+    } else {
+      notasList = [...NOTAS_INICIALES];
+    }
+  } catch (errNotas) {
+    notasList = [...NOTAS_INICIALES];
+  }
+  renderNotas();
 
-  // 3. Conexión en vivo con Firestore (protegida)
+  // 5. Consultar tasa BCV en vivo de inmediato
+  fetchTasaBCV();
+
+  // Programar actualización automática cada 10 minutos (600.000 ms)
+  setInterval(() => {
+    fetchTasaBCV();
+  }, 10 * 60 * 1000);
+
+  // 6. Conexión en vivo con Firestore
   if (db) {
     try {
+      // Apartamentos
       db.collection("apartamentos").onSnapshot((snapshot) => {
         if (!snapshot.empty) {
           apartamentosList = [];
@@ -165,14 +265,18 @@ function initApp() {
         }
       }, (err) => console.warn("Firestore apartamentos:", err));
 
+      // Tasas BCV
       db.collection("tasas_bcv").onSnapshot((snapshot) => {
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
-          tasasHistorial[data.fecha] = data.tasa;
+          if (data && data.fecha && data.tasa) {
+            tasasHistorial[data.fecha] = data.tasa;
+          }
         });
         renderHistorialTasas();
       }, (err) => console.warn("Firestore tasas:", err));
 
+      // Jornadas
       db.collection("jornadas").onSnapshot((snapshot) => {
         if (!snapshot.empty) {
           jornadasList = [];
@@ -183,12 +287,24 @@ function initApp() {
           db.collection("jornadas").doc(jornadaLocalInicial.id).set(jornadaLocalInicial).catch(() => {});
         }
       }, (err) => console.warn("Firestore jornadas:", err));
+
+      // Notas y Protocolos en vivo
+      db.collection("notas_protocolos").onSnapshot((snapshot) => {
+        if (!snapshot.empty) {
+          notasList = [];
+          snapshot.forEach(docSnap => notasList.push({ id: docSnap.id, ...docSnap.data() }));
+          notasList.sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+          try { localStorage.setItem("condo_notas_protocolos", JSON.stringify(notasList)); } catch (e) {}
+          renderNotas();
+        }
+      }, (err) => console.warn("Firestore notas:", err));
+
     } catch (errDb) {
       console.warn("Error iniciando listeners de Firestore:", errDb);
     }
   }
 
-  // Listener para el botón de refrescar tasa
+  // Listener para el botón manual de refrescar tasa
   const btnRefresh = document.getElementById("btn-refresh-rate");
   if (btnRefresh) {
     btnRefresh.onclick = () => fetchTasaBCV();
@@ -228,7 +344,8 @@ function cargarJornadaSeleccionada(id) {
   const j = jornadasList.find(x => x.id === id);
   if (j) {
     jornadaActiva = j;
-    document.getElementById("select-jornada").value = id;
+    const select = document.getElementById("select-jornada");
+    if (select) select.value = id;
     renderJornadaActiva();
   }
 
@@ -236,7 +353,8 @@ function cargarJornadaSeleccionada(id) {
     unsubscribeJornada = db.collection("jornadas").doc(id).onSnapshot((docSnap) => {
       if (docSnap.exists) {
         jornadaActiva = { id: docSnap.id, ...docSnap.data() };
-        document.getElementById("select-jornada").value = id;
+        const select = document.getElementById("select-jornada");
+        if (select) select.value = id;
         renderJornadaActiva();
       }
     });
@@ -276,12 +394,12 @@ function renderJornadaActiva() {
       comprobanteUrl: ""
     };
 
-    // Si el pago está pendiente, aseguramos que refleje la cuota cobrada vigente
+    // La cuota fijada vigente para cada apartamento
     const montoFijadoVigente = (p.estadoPago === "PAGADO" && p.montoFijadoUSD)
-      ? p.montoFijadoUSD
-      : (jornadaActiva.cuotaCobradaPorApto || 0);
+      ? Number(p.montoFijadoUSD)
+      : Number(jornadaActiva.cuotaCobradaPorApto || 0);
 
-    totalFijadoUSD += Number(montoFijadoVigente || 0);
+    totalFijadoUSD += montoFijadoVigente;
 
     const isPagado = p.estadoPago === "PAGADO";
     if (isPagado) {
@@ -300,7 +418,7 @@ function renderJornadaActiva() {
           ${apt.numero}
         </span>
       </td>
-      <td class="py-3.5 px-5 font-bold text-slate-800 text-[11px]">${apt.propietario}</td>
+      <td class="py-3.5 px-5 font-bold text-slate-800 text-xs sm:text-sm">${apt.propietario}</td>
       <td class="py-3.5 px-5 text-slate-500 font-mono text-xs">${p.fechaPago || '<span class="text-slate-300 font-sans">—</span>'}</td>
       <td class="py-3.5 px-5 text-right font-mono text-xs font-bold text-slate-600">${p.tasaBCV ? Number(p.tasaBCV).toFixed(2) : '<span class="text-slate-300 font-sans">—</span>'}</td>
       <td class="py-3.5 px-5 text-right font-mono font-bold text-slate-900">${formatUSD(montoFijadoVigente)}</td>
@@ -347,19 +465,19 @@ function renderJornadaActiva() {
     tbody.appendChild(tr);
   });
 
-  // Estadísticas
+  // Estadísticas y KPIs superiores
   document.getElementById("stat-presupuesto").textContent = formatUSD(jornadaActiva.montoFactura || 0);
   document.getElementById("stat-cuota-cobrada").textContent = `${formatUSD(jornadaActiva.cuotaCobradaPorApto || 0)} / apto`;
   document.getElementById("stat-recaudado-bs").textContent = formatBS(totalRecaudadoBS);
   document.getElementById("stat-recaudado-usd").textContent = formatUSD(totalRealUSD);
 
-  const tasaCierre = jornadaActiva.tasaCierreProyectada || tasaBCVHoy || 897.54;
+  const tasaCierre = jornadaActiva.tasaCierreProyectada || tasaBCVHoy || 911.62;
   document.getElementById("stat-tasa-cierre").textContent = `${Number(tasaCierre).toFixed(2)} Bs./$`;
 
   const superavit = totalRealUSD - (jornadaActiva.montoFactura || 0);
   const elSuperavit = document.getElementById("stat-superavit");
   elSuperavit.textContent = `${superavit >= 0 ? '+' : ''}${formatUSD(superavit)}`;
-  elSuperavit.className = `font-bold ${superavit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`;
+  elSuperavit.className = `font-bold font-mono ${superavit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`;
 
   // Avance
   const totalAptos = aptos.length;
@@ -367,7 +485,7 @@ function renderJornadaActiva() {
   const pct = totalAptos > 0 ? (aptosPagados / totalAptos) * 100 : 0;
   document.getElementById("stat-progreso-barra").style.width = `${pct}%`;
 
-  // Totales
+  // TOTALES EN EL PIE DE TABLA (TFOOT)
   const elTotalFijado = document.getElementById("total-fijado-usd");
   if (elTotalFijado) elTotalFijado.textContent = formatUSD(totalFijadoUSD);
 
@@ -401,7 +519,7 @@ window.openModalPago = function(aptoId) {
   const fechaPago = pago.fechaPago || fechaHoy;
   document.getElementById("pago-fecha").value = fechaPago;
 
-  const tasaFecha = pago.tasaBCV || tasasHistorial[fechaPago] || tasaBCVHoy || 897.54;
+  const tasaFecha = pago.tasaBCV || tasasHistorial[fechaPago] || tasaBCVHoy || 911.62;
   document.getElementById("pago-tasa-bcv").value = Number(tasaFecha).toFixed(2);
 
   document.getElementById("pago-estado").value = pago.estadoPago || "PENDIENTE";
@@ -432,7 +550,7 @@ window.openModalPago = function(aptoId) {
   uploadPrompt.classList.remove("hidden");
   previewBox.classList.add("hidden");
 
-  // Mostrar o esconder el botón de Revertir Pago
+  // Mostrar o esconder botón Revertir Pago
   const btnRevertir = document.getElementById("btn-revertir-pago");
   if (btnRevertir) {
     if (pago.estadoPago === "PAGADO") {
@@ -572,13 +690,12 @@ window.guardarPago = async function(event) {
 
     let comprobanteUrl = jornadaActiva.pagos?.[aptoId]?.comprobanteUrl || "";
 
-    // Si seleccionó archivo nuevo, lo convertimos a Base64 de inmediato (rápido y seguro)
     if (fileInput.files.length > 0) {
       const file = fileInput.files[0];
       try {
         comprobanteUrl = await fileToBase64(file);
       } catch (errFile) {
-        console.warn("No se pudo leer archivo en Base64:", errFile);
+        console.warn("No se pudo leer comprobante:", errFile);
       }
     }
 
@@ -595,21 +712,17 @@ window.guardarPago = async function(event) {
       updatedAt: new Date().toISOString()
     };
 
-    // 1. Actualizar memoria y tabla INMEDIATAMENTE
     if (!jornadaActiva.pagos) jornadaActiva.pagos = {};
     jornadaActiva.pagos[aptoId] = payloadPago;
     renderJornadaActiva();
-
-    // 2. Cerrar el modal de inmediato para no hacer esperar al usuario
     closeModalPago();
 
-    // 3. Sincronizar en segundo plano con Firebase Firestore sin congelar la pantalla
     if (db) {
       const updatePath = `pagos.${aptoId}`;
       db.collection("jornadas").doc(jornadaActiva.id).update({
         [updatePath]: payloadPago
       }).catch(err => {
-        console.warn("Firestore update error en background:", err);
+        console.warn("Firestore update en background:", err);
       });
     }
 
@@ -648,7 +761,7 @@ window.openModalNuevaJornada = function() {
 
 window.openModalEditarJornada = function() {
   if (!jornadaActiva) return;
-  document.getElementById("modal-jornada-titulo").textContent = "Editar Jornada Activa";
+  document.getElementById("modal-jornada-titulo").textContent = "Editar Parámetros de la Jornada";
   document.getElementById("jornada-id").value = jornadaActiva.id;
   document.getElementById("jornada-nombre").value = jornadaActiva.nombre || "";
   document.getElementById("jornada-monto-factura").value = jornadaActiva.montoFactura || "";
@@ -690,7 +803,6 @@ window.guardarJornada = async function(event) {
 
   try {
     if (idExistente) {
-      // Modificar jornada existente
       const pagosActualizados = { ...(jornadaActiva.pagos || {}) };
       const aptos = apartamentosList.length > 0 ? apartamentosList : APARTAMENTOS_INICIALES;
 
@@ -740,7 +852,6 @@ window.guardarJornada = async function(event) {
         }).catch(e => console.warn(e));
       }
     } else {
-      // Crear nueva jornada
       const idNueva = `jornada_${Date.now()}`;
       const aptos = apartamentosList.length > 0 ? apartamentosList : APARTAMENTOS_INICIALES;
       const pagos = {};
@@ -768,7 +879,7 @@ window.guardarJornada = async function(event) {
         numAptos,
         margenProteccion: margen,
         cuotaCobradaPorApto: cuotaCobrada,
-        tasaCierreProyectada: tasaBCVHoy || 897.54,
+        tasaCierreProyectada: tasaBCVHoy || 911.62,
         fechaInicio,
         fechaFin,
         pagos,
@@ -921,7 +1032,317 @@ window.guardarTasaManual = function(event) {
 };
 
 // ==========================================
-// 8. ACCIONES ADICIONALES
+// 8. MÓDULO: NOTAS Y PROTOCOLOS
+// ==========================================
+function renderNotas(lista = null) {
+  const contenedor = document.getElementById("contenedor-notas");
+  const vacio = document.getElementById("vacio-notas");
+  const badgeTotal = document.getElementById("badge-total-notas");
+  if (!contenedor) return;
+
+  const items = lista || notasList;
+  if (badgeTotal) badgeTotal.textContent = notasList.length;
+
+  if (items.length === 0) {
+    contenedor.innerHTML = "";
+    if (vacio) vacio.classList.remove("hidden");
+    return;
+  }
+
+  if (vacio) vacio.classList.add("hidden");
+  contenedor.innerHTML = "";
+
+  const coloresCategoria = {
+    "Protocolo": { bg: "bg-sky-50", text: "text-sky-700", border: "border-sky-200" },
+    "Acuerdo": { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
+    "Mantenimiento": { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
+    "Servicios": { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" },
+    "General": { bg: "bg-slate-100", text: "text-slate-700", border: "border-slate-200" },
+  };
+
+  items.forEach(nota => {
+    const estiloCat = coloresCategoria[nota.categoria] || coloresCategoria["General"];
+    const esPDF = nota.adjuntoTipo === "application/pdf" || (nota.adjuntoUrl && nota.adjuntoUrl.includes("application/pdf"));
+    const esImg = nota.adjuntoUrl && !esPDF;
+
+    const card = document.createElement("div");
+    card.className = "bg-white p-5 rounded-3xl border border-slate-200/80 shadow-card hover:shadow-md transition-all flex flex-col justify-between group";
+
+    card.innerHTML = `
+      <div>
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide ${estiloCat.bg} ${estiloCat.text} border ${estiloCat.border}">
+            ${nota.categoria || 'General'}
+          </span>
+          <span class="text-xs font-mono font-bold text-slate-400">
+            ${nota.fecha || 'Sin fecha'}
+          </span>
+        </div>
+
+        <h3 class="text-sm font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors leading-snug">
+          ${nota.asunto}
+        </h3>
+
+        ${nota.descripcion ? `
+          <p class="text-xs text-slate-600 mt-2 line-clamp-3 leading-relaxed whitespace-pre-line">
+            ${nota.descripcion}
+          </p>
+        ` : ''}
+
+        ${nota.adjuntoUrl ? `
+          <div class="mt-4 pt-3 border-t border-slate-100">
+            <button onclick="verAdjuntoNota('${nota.id}')" class="w-full bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-200 rounded-2xl p-2.5 flex items-center space-x-2.5 transition text-left">
+              <div class="w-8 h-8 rounded-xl ${esPDF ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'} flex items-center justify-center shrink-0">
+                <i data-lucide="${esPDF ? 'file-text' : 'image'}" class="w-4 h-4"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] font-bold text-slate-800 truncate">${nota.adjuntoNombre || (esPDF ? 'Documento PDF' : 'Captura Adjunta')}</p>
+                <p class="text-[10px] text-blue-600 font-semibold">Clic para ver archivo</p>
+              </div>
+            </button>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end space-x-1.5">
+        <button onclick="editarNota('${nota.id}')" class="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition" title="Editar Nota">
+          <i data-lucide="edit-3" class="w-4 h-4"></i>
+        </button>
+        <button onclick="eliminarNota('${nota.id}')" class="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition" title="Eliminar Nota">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
+        </button>
+      </div>
+    `;
+
+    contenedor.appendChild(card);
+  });
+
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+window.filtrarNotas = function() {
+  const texto = (document.getElementById("filtro-notas")?.value || "").toLowerCase().trim();
+  const cat = document.getElementById("filtro-categoria-nota")?.value || "TODAS";
+
+  const filtradas = notasList.filter(n => {
+    const coincideTexto = !texto || (n.asunto || "").toLowerCase().includes(texto) || (n.descripcion || "").toLowerCase().includes(texto);
+    const coincideCat = cat === "TODAS" || n.categoria === cat;
+    return coincideTexto && coincideCat;
+  });
+
+  renderNotas(filtradas);
+};
+
+window.openModalNuevaNota = function() {
+  document.getElementById("modal-nota-titulo").textContent = "Nueva Nota / Protocolo";
+  document.getElementById("nota-id").value = "";
+  document.getElementById("nota-fecha").value = new Date().toISOString().split('T')[0];
+  document.getElementById("nota-categoria").value = "Protocolo";
+  document.getElementById("nota-asunto").value = "";
+  document.getElementById("nota-descripcion").value = "";
+
+  adjuntoNotaModalActual = "";
+  adjuntoNotaTipoActual = "";
+
+  const fileInput = document.getElementById("nota-adjunto-file");
+  if (fileInput) fileInput.value = "";
+
+  document.getElementById("nota-upload-prompt").classList.remove("hidden");
+  document.getElementById("nota-preview-box").classList.add("hidden");
+  document.getElementById("nota-adjunto-actual-link").classList.add("hidden");
+
+  document.getElementById("modal-nota").classList.remove("hidden");
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+};
+
+window.editarNota = function(id) {
+  const nota = notasList.find(n => n.id === id);
+  if (!nota) return;
+
+  document.getElementById("modal-nota-titulo").textContent = "Editar Nota / Protocolo";
+  document.getElementById("nota-id").value = nota.id;
+  document.getElementById("nota-fecha").value = nota.fecha || new Date().toISOString().split('T')[0];
+  document.getElementById("nota-categoria").value = nota.categoria || "General";
+  document.getElementById("nota-asunto").value = nota.asunto || "";
+  document.getElementById("nota-descripcion").value = nota.descripcion || "";
+
+  adjuntoNotaModalActual = nota.adjuntoUrl || "";
+  adjuntoNotaTipoActual = nota.adjuntoTipo || "";
+
+  const fileInput = document.getElementById("nota-adjunto-file");
+  if (fileInput) fileInput.value = "";
+
+  document.getElementById("nota-upload-prompt").classList.remove("hidden");
+  document.getElementById("nota-preview-box").classList.add("hidden");
+
+  const linkBox = document.getElementById("nota-adjunto-actual-link");
+  if (adjuntoNotaModalActual) {
+    linkBox.classList.remove("hidden");
+  } else {
+    linkBox.classList.add("hidden");
+  }
+
+  document.getElementById("modal-nota").classList.remove("hidden");
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+};
+
+window.closeModalNota = function() {
+  document.getElementById("modal-nota").classList.add("hidden");
+};
+
+window.previewNotaAdjunto = function(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  document.getElementById("nota-upload-prompt").classList.add("hidden");
+  const previewBox = document.getElementById("nota-preview-box");
+  previewBox.classList.remove("hidden");
+  document.getElementById("nota-file-name").textContent = file.name;
+
+  const imgEl = document.getElementById("nota-preview-img");
+  const docIcon = document.getElementById("nota-preview-doc-icon");
+
+  if (file.type.startsWith("image/")) {
+    imgEl.classList.remove("hidden");
+    docIcon.classList.add("hidden");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      imgEl.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  } else {
+    imgEl.classList.add("hidden");
+    docIcon.classList.remove("hidden");
+  }
+};
+
+window.verAdjuntoNotaModal = function() {
+  if (!adjuntoNotaModalActual) return;
+  if (adjuntoNotaTipoActual === "application/pdf" || adjuntoNotaModalActual.startsWith("data:application/pdf")) {
+    const w = window.open("");
+    w.document.write(`<iframe src="${adjuntoNotaModalActual}" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+  } else {
+    verComprobanteGrande(adjuntoNotaModalActual);
+  }
+};
+
+window.quitarAdjuntoNotaModal = function() {
+  adjuntoNotaModalActual = "";
+  adjuntoNotaTipoActual = "";
+  document.getElementById("nota-adjunto-actual-link").classList.add("hidden");
+  const fileInput = document.getElementById("nota-adjunto-file");
+  if (fileInput) fileInput.value = "";
+  document.getElementById("nota-upload-prompt").classList.remove("hidden");
+  document.getElementById("nota-preview-box").classList.add("hidden");
+};
+
+window.verAdjuntoNota = function(id) {
+  const nota = notasList.find(n => n.id === id);
+  if (!nota || !nota.adjuntoUrl) return;
+
+  const esPDF = nota.adjuntoTipo === "application/pdf" || nota.adjuntoUrl.startsWith("data:application/pdf");
+  if (esPDF) {
+    const w = window.open("");
+    w.document.write(`<iframe src="${nota.adjuntoUrl}" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+  } else {
+    verComprobanteGrande(nota.adjuntoUrl);
+  }
+};
+
+window.guardarNota = async function(event) {
+  event.preventDefault();
+  const btn = document.getElementById("btn-guardar-nota");
+  btn.disabled = true;
+  btn.innerHTML = `<span>Guardando...</span>`;
+
+  try {
+    const idExistente = document.getElementById("nota-id").value;
+    const fecha = document.getElementById("nota-fecha").value;
+    const categoria = document.getElementById("nota-categoria").value;
+    const asunto = document.getElementById("nota-asunto").value.trim();
+    const descripcion = document.getElementById("nota-descripcion").value.trim();
+    const fileInput = document.getElementById("nota-adjunto-file");
+
+    let adjuntoUrl = adjuntoNotaModalActual || "";
+    let adjuntoTipo = adjuntoNotaTipoActual || "";
+    let adjuntoNombre = "";
+
+    if (fileInput && fileInput.files.length > 0) {
+      const file = fileInput.files[0];
+      adjuntoTipo = file.type;
+      adjuntoNombre = file.name;
+      try {
+        adjuntoUrl = await fileToBase64(file);
+      } catch (errF) {
+        console.warn("Error convirtiendo adjunto de nota:", errF);
+      }
+    }
+
+    const id = idExistente || `nota_${Date.now()}`;
+    const payloadNota = {
+      id: id,
+      fecha: fecha,
+      categoria: categoria,
+      asunto: asunto,
+      descripcion: descripcion,
+      adjuntoUrl: adjuntoUrl,
+      adjuntoTipo: adjuntoTipo,
+      adjuntoNombre: adjuntoNombre,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (idExistente) {
+      const idx = notasList.findIndex(n => n.id === idExistente);
+      if (idx >= 0) notasList[idx] = { ...notasList[idx], ...payloadNota };
+    } else {
+      payloadNota.createdAt = new Date().toISOString();
+      notasList.unshift(payloadNota);
+    }
+
+    // Persistencia local
+    try {
+      localStorage.setItem("condo_notas_protocolos", JSON.stringify(notasList));
+    } catch (e) {}
+
+    renderNotas();
+    closeModalNota();
+
+    // Sincronización Firestore
+    if (db) {
+      db.collection("notas_protocolos").doc(id).set(payloadNota, { merge: true }).catch(err => {
+        console.warn("Error guardando nota en Firestore:", err);
+      });
+    }
+
+  } catch (error) {
+    console.error("Error al guardar nota:", error);
+    alert("Error al guardar la nota: " + error.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<span>Guardar Nota</span>`;
+  }
+};
+
+window.eliminarNota = function(id) {
+  const nota = notasList.find(n => n.id === id);
+  const titulo = nota ? `"${nota.asunto}"` : "esta nota";
+
+  const confirmar = confirm(`¿Estás seguro de ELIMINAR ${titulo}?\n\nEsta acción no se puede deshacer.`);
+  if (!confirmar) return;
+
+  notasList = notasList.filter(n => n.id !== id);
+  try { localStorage.setItem("condo_notas_protocolos", JSON.stringify(notasList)); } catch (e) {}
+  renderNotas();
+
+  if (db) {
+    db.collection("notas_protocolos").doc(id).delete().catch(err => {
+      console.warn("Error eliminando nota en Firestore:", err);
+    });
+  }
+};
+
+// ==========================================
+// 9. ACCIONES ADICIONALES Y PESTAÑAS
 // ==========================================
 window.verComprobanteGrande = function(url) {
   document.getElementById("img-ampliada").src = url;
@@ -946,7 +1367,7 @@ window.marcarTodosRecordatorio = function() {
 
   const texto = "📢 *RECORDATORIO DE COBRANZA - " + jornadaActiva.nombre.toUpperCase() + "*\n" +
     "Cuota por apartamento: " + formatUSD(jornadaActiva.cuotaCobradaPorApto) + "\n" +
-    "Tasa del día: " + document.getElementById("header-bcv-rate").innerText + "\n\n" +
+    "Tasa oficial BCV: " + document.getElementById("header-bcv-rate").innerText + "\n\n" +
     "*Apartamentos pendientes (" + pendientes.length + "):*\n" +
     pendientes.map(a => "• " + a.numero + " - " + a.propietario).join("\n");
 
@@ -956,16 +1377,16 @@ window.marcarTodosRecordatorio = function() {
 };
 
 window.switchTab = function(tab) {
-  const tabs = ['jornadas', 'apartamentos', 'tasas'];
+  const tabs = ['jornadas', 'apartamentos', 'tasas', 'notas'];
   tabs.forEach(t => {
     const el = document.getElementById(`tab-${t}`);
     const btn = document.getElementById(`tab-btn-${t}`);
     if (t === tab) {
-      el.classList.remove("hidden");
-      btn.className = "tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center space-x-2 transition-all duration-200 bg-blue-50 text-blue-700 shadow-sm shadow-blue-500/10 border border-blue-200/60";
+      if (el) el.classList.remove("hidden");
+      if (btn) btn.className = "tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center space-x-2 transition-all duration-200 bg-blue-50 text-blue-700 shadow-sm shadow-blue-500/10 border border-blue-200/60";
     } else {
-      el.classList.add("hidden");
-      btn.className = "tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2 transition-all duration-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100/80";
+      if (el) el.classList.add("hidden");
+      if (btn) btn.className = "tab-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2 transition-all duration-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100/80";
     }
   });
   if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -973,7 +1394,7 @@ window.switchTab = function(tab) {
 
 window.initApp = initApp;
 
-// Arrancar inmediatamente
+// Arrancar inmediatamente cuando el DOM esté listo
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initApp);
 } else {
