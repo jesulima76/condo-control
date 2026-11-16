@@ -1,5 +1,5 @@
 // ==========================================================================
-// CondoControl - Gestión de Cobranzas, Tasa BCV & Notas/Protocolos
+// CondoControl - Gestión de Cobranzas (USD / Cuota Fija Bs.), BCV & Notas
 // ==========================================================================
 
 const firebaseConfig = {
@@ -80,6 +80,10 @@ const NOTAS_INICIALES = [
 
 const formatUSD = (num) => `$${(Number(num) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const formatBS = (num) => `Bs. ${(Number(num) || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function esJornadaEnBs(jornada = jornadaActiva) {
+  return Boolean(jornada && jornada.monedaJornada === "BS");
+}
 
 function escapeHtml(str) {
   return String(str || "")
@@ -229,6 +233,7 @@ function initApp() {
   const jornadaLocalInicial = {
     id: "jornada_bolsas_basura_nov_2026",
     nombre: "Bolsas de Basura y Limpieza",
+    monedaJornada: "USD",
     montoFactura: 55.00,
     numAptos: 13,
     margenProteccion: 6.2,
@@ -356,7 +361,10 @@ function actualizarSelectorJornadas() {
       const opt = document.createElement("option");
       opt.value = j.id;
       opt.className = sel === selectSide ? "bg-[#071631] text-white" : "text-slate-900";
-      opt.textContent = `${j.nombre} (${formatUSD(j.cuotaCobradaPorApto)})`;
+      const cuotaTxt = esJornadaEnBs(j)
+        ? formatBS(j.cuotaCobradaPorAptoBS || 0)
+        : formatUSD(j.cuotaCobradaPorApto);
+      opt.textContent = `${j.nombre} (${cuotaTxt})`;
       sel.appendChild(opt);
     });
   });
@@ -432,17 +440,24 @@ window.setChartMode = function(mode) {
 function renderJornadaActiva() {
   if (!jornadaActiva) return;
 
+  const isBsMode = esJornadaEnBs(jornadaActiva);
   const pagos = jornadaActiva.pagos || {};
   const aptos = apartamentosList.length > 0 ? apartamentosList : APARTAMENTOS_INICIALES;
+  const tasaRef = Number(jornadaActiva.tasaCierreProyectada || tasaBCVHoy || 911.62);
 
   const textoFiltro = (document.getElementById("filtro-pagos-texto")?.value || "").toLowerCase().trim();
   const estadoFiltro = document.getElementById("filtro-pagos-estado")?.value || "TODOS";
 
   let totalFijadoUSD = 0;
+  let totalFijadoBS = 0;
   let totalRecaudadoBS = 0;
   let totalRealUSD = 0;
   let aptosPagados = 0;
   let filasVisibles = 0;
+
+  // Encabezado dinámico de columna 5
+  const thMontoFijado = document.getElementById("th-monto-fijado");
+  if (thMontoFijado) thMontoFijado.textContent = isBsMode ? "Cuota Fija (Bs.)" : "Monto ($)";
 
   const tbody = document.getElementById("tabla-pagos-body");
   if (!tbody) return;
@@ -456,6 +471,7 @@ function renderJornadaActiva() {
       fechaPago: "",
       tasaBCV: 0,
       montoFijadoUSD: jornadaActiva.cuotaCobradaPorApto || 0,
+      montoFijadoBS: jornadaActiva.cuotaCobradaPorAptoBS || 0,
       montoPagadoBS: 0,
       equivalenteUSDReal: 0,
       estadoPago: "PENDIENTE",
@@ -467,7 +483,14 @@ function renderJornadaActiva() {
       ? Number(p.montoFijadoUSD)
       : Number(jornadaActiva.cuotaCobradaPorApto || 0);
 
+    const montoFijadoVigenteBS = (p.estadoPago === "PAGADO" && p.montoFijadoBS)
+      ? Number(p.montoFijadoBS)
+      : isBsMode
+        ? Number(jornadaActiva.cuotaCobradaPorAptoBS || 0)
+        : Number((montoFijadoVigente * tasaRef).toFixed(2));
+
     totalFijadoUSD += montoFijadoVigente;
+    totalFijadoBS += montoFijadoVigenteBS;
 
     const isPagado = p.estadoPago === "PAGADO";
     if (isPagado) {
@@ -498,7 +521,9 @@ function renderJornadaActiva() {
       <td class="py-3 px-4 font-bold text-slate-800 text-xs sm:text-sm whitespace-nowrap">${escapeHtml(apt.propietario)}</td>
       <td class="py-3 px-4 text-slate-600 font-mono text-xs tabular-nums whitespace-nowrap">${p.fechaPago || '—'}</td>
       <td class="py-3 px-4 text-right font-mono text-xs font-semibold text-slate-600 tabular-nums">${p.tasaBCV ? Number(p.tasaBCV).toFixed(2) : '—'}</td>
-      <td class="py-3 px-4 text-right font-mono font-bold text-slate-900 tabular-nums">${formatUSD(montoFijadoVigente)}</td>
+      <td class="py-3 px-4 text-right font-mono font-bold text-slate-900 tabular-nums whitespace-nowrap">
+        ${isBsMode ? formatBS(montoFijadoVigenteBS) : formatUSD(montoFijadoVigente)}
+      </td>
       <td class="py-3 px-4 text-right font-extrabold font-mono tabular-nums whitespace-nowrap ${p.montoPagadoBS > 0 ? 'text-emerald-700' : 'text-slate-300'}">
         ${p.montoPagadoBS > 0 ? formatBS(p.montoPagadoBS) : '—'}
       </td>
@@ -557,21 +582,45 @@ function renderJornadaActiva() {
   const totalAptos = aptos.length;
   const pct = totalAptos > 0 ? (aptosPagados / totalAptos) * 100 : 0;
   const pendientesCount = totalAptos - aptosPagados;
-  const tasaCierre = jornadaActiva.tasaCierreProyectada || tasaBCVHoy || 911.62;
-  const superavit = totalRealUSD - (jornadaActiva.montoFactura || 0);
+  const pendienteBS = isBsMode
+    ? Math.max(0, totalFijadoBS - totalRecaudadoBS)
+    : Math.max(0, (totalFijadoUSD - totalRealUSD) * tasaRef);
+  const superavitUSD = totalRealUSD - (jornadaActiva.montoFactura || 0);
+  const superavitBS = totalRecaudadoBS - (jornadaActiva.montoFacturaBS || 0);
 
-  document.getElementById("stat-presupuesto").textContent = formatUSD(jornadaActiva.montoFactura || 0);
-  document.getElementById("stat-cuota-cobrada").textContent = `${formatUSD(jornadaActiva.cuotaCobradaPorApto || 0)} / apto`;
+  const lblMeta = document.getElementById("label-kpi-meta");
+  if (lblMeta) lblMeta.textContent = isBsMode ? "Meta / Factura (Cuota Fija Bs.)" : "Meta / Factura Proveedor";
+  const lblCuota = document.getElementById("label-kpi-cuota");
+  if (lblCuota) lblCuota.textContent = isBsMode ? "Cuota fija:" : "Cuota:";
+
+  document.getElementById("stat-presupuesto").textContent = isBsMode
+    ? formatBS(jornadaActiva.montoFacturaBS || 0)
+    : formatUSD(jornadaActiva.montoFactura || 0);
+  document.getElementById("stat-cuota-cobrada").textContent = isBsMode
+    ? `${formatBS(jornadaActiva.cuotaCobradaPorAptoBS || 0)} / apto`
+    : `${formatUSD(jornadaActiva.cuotaCobradaPorApto || 0)} / apto`;
+
   document.getElementById("stat-recaudado-bs").textContent = formatBS(totalRecaudadoBS);
   document.getElementById("stat-recaudado-usd").textContent = formatUSD(totalRealUSD);
-  document.getElementById("stat-tasa-cierre").textContent = `${Number(tasaCierre).toFixed(2)} Bs./$`;
 
   const elPendientes = document.getElementById("stat-pendientes-resumen");
-  if (elPendientes) elPendientes.textContent = `${pendientesCount} pend.`;
+  if (elPendientes) {
+    elPendientes.textContent = isBsMode
+      ? `${pendientesCount} pend. · Restan ${formatBS(pendienteBS)}`
+      : `${pendientesCount} pend. · ${Number(tasaRef).toFixed(2)} Bs./$`;
+  }
+
+  const lblBalance = document.getElementById("label-kpi-balance");
+  if (lblBalance) lblBalance.textContent = isBsMode ? "Balance Bs:" : "Balance:";
 
   const elSuperavit = document.getElementById("stat-superavit");
-  elSuperavit.textContent = `${superavit >= 0 ? '+' : ''}${formatUSD(superavit)}`;
-  elSuperavit.className = `font-bold font-mono tabular-nums ${superavit >= 0 ? 'text-emerald-700' : 'text-rose-600'}`;
+  if (isBsMode) {
+    elSuperavit.textContent = `${superavitBS >= 0 ? '+' : ''}${formatBS(superavitBS)}`;
+    elSuperavit.className = `font-bold font-mono tabular-nums ${superavitBS >= 0 ? 'text-emerald-700' : 'text-rose-600'}`;
+  } else {
+    elSuperavit.textContent = `${superavitUSD >= 0 ? '+' : ''}${formatUSD(superavitUSD)}`;
+    elSuperavit.className = `font-bold font-mono tabular-nums ${superavitUSD >= 0 ? 'text-emerald-700' : 'text-rose-600'}`;
+  }
 
   document.getElementById("stat-avance-cobro").textContent = `${aptosPagados} / ${totalAptos}`;
   const elPct = document.getElementById("stat-porcentaje-cobrado");
@@ -586,19 +635,20 @@ function renderJornadaActiva() {
 
   // Totales TFOOT
   const elTotalFijado = document.getElementById("total-fijado-usd");
-  if (elTotalFijado) elTotalFijado.textContent = formatUSD(totalFijadoUSD);
+  if (elTotalFijado) elTotalFijado.textContent = isBsMode ? formatBS(totalFijadoBS) : formatUSD(totalFijadoUSD);
   const elTotalPagado = document.getElementById("total-pagado-bs");
   if (elTotalPagado) elTotalPagado.textContent = formatBS(totalRecaudadoBS);
   const elTotalReal = document.getElementById("total-real-usd");
   if (elTotalReal) elTotalReal.textContent = formatUSD(totalRealUSD);
 
-  // Gráficos SVG
   renderGraficosJornada({
+    isBsMode,
     pct,
     totalRecaudadoBS,
     totalFijadoUSD,
+    totalFijadoBS,
     totalRealUSD,
-    tasaCierre
+    tasaCierre: tasaRef
   });
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -607,16 +657,26 @@ function renderJornadaActiva() {
 function renderGraficosJornada(resumen = null) {
   if (!jornadaActiva) return;
 
-  // Si se llama sin resumen (ej. cambio de tab de gráfico), recalculamos
   let data = resumen;
   if (!data) {
+    const isBsMode = esJornadaEnBs(jornadaActiva);
     const pagos = jornadaActiva.pagos || {};
     const aptos = apartamentosList.length > 0 ? apartamentosList : APARTAMENTOS_INICIALES;
-    let totalFijadoUSD = 0, totalRecaudadoBS = 0, totalRealUSD = 0, aptosPagados = 0;
+    const tasaCierre = Number(jornadaActiva.tasaCierreProyectada || tasaBCVHoy || 911.62);
+    let totalFijadoUSD = 0, totalFijadoBS = 0, totalRecaudadoBS = 0, totalRealUSD = 0, aptosPagados = 0;
+
     aptos.forEach(apt => {
       const p = pagos[apt.id];
-      const fijado = (p && p.estadoPago === "PAGADO" && p.montoFijadoUSD) ? Number(p.montoFijadoUSD) : Number(jornadaActiva.cuotaCobradaPorApto || 0);
-      totalFijadoUSD += fijado;
+      const fijadoUSD = (p && p.estadoPago === "PAGADO" && p.montoFijadoUSD) ? Number(p.montoFijadoUSD) : Number(jornadaActiva.cuotaCobradaPorApto || 0);
+      const fijadoBS = (p && p.estadoPago === "PAGADO" && p.montoFijadoBS)
+        ? Number(p.montoFijadoBS)
+        : isBsMode
+          ? Number(jornadaActiva.cuotaCobradaPorAptoBS || 0)
+          : Number((fijadoUSD * tasaCierre).toFixed(2));
+
+      totalFijadoUSD += fijadoUSD;
+      totalFijadoBS += fijadoBS;
+
       if (p && p.estadoPago === "PAGADO") {
         aptosPagados++;
         totalRecaudadoBS += Number(p.montoPagadoBS || 0);
@@ -624,8 +684,7 @@ function renderGraficosJornada(resumen = null) {
       }
     });
     const pct = aptos.length > 0 ? (aptosPagados / aptos.length) * 100 : 0;
-    const tasaCierre = jornadaActiva.tasaCierreProyectada || tasaBCVHoy || 911.62;
-    data = { pct, totalRecaudadoBS, totalFijadoUSD, totalRealUSD, tasaCierre };
+    data = { isBsMode, pct, totalRecaudadoBS, totalFijadoUSD, totalFijadoBS, totalRealUSD, tasaCierre };
   }
 
   // 1. Donut Chart
@@ -638,8 +697,10 @@ function renderGraficosJornada(resumen = null) {
   const lblPct = document.getElementById("donut-pct-label");
   if (lblPct) lblPct.textContent = `${data.pct.toFixed(1)}%`;
 
-  const metaBS = data.totalFijadoUSD * data.tasaCierre;
-  const pendienteBS = Math.max(0, (data.totalFijadoUSD - data.totalRealUSD) * data.tasaCierre);
+  const metaBS = data.isBsMode ? data.totalFijadoBS : data.totalFijadoUSD * data.tasaCierre;
+  const pendienteBS = data.isBsMode
+    ? Math.max(0, data.totalFijadoBS - data.totalRecaudadoBS)
+    : Math.max(0, (data.totalFijadoUSD - data.totalRealUSD) * data.tasaCierre);
 
   const elDonutPag = document.getElementById("donut-pagados-bs");
   if (elDonutPag) elDonutPag.textContent = formatBS(data.totalRecaudadoBS);
@@ -739,6 +800,7 @@ window.openModalPagoRapido = function() {
 window.openModalPago = function(aptoId) {
   if (!jornadaActiva) return;
 
+  const isBsMode = esJornadaEnBs(jornadaActiva);
   const apto = apartamentosList.find(a => a.id === aptoId) || APARTAMENTOS_INICIALES.find(a => a.id === aptoId);
   const pagos = jornadaActiva.pagos || {};
   const pago = pagos[aptoId] || {};
@@ -747,9 +809,6 @@ window.openModalPago = function(aptoId) {
   document.getElementById("modal-pago-titulo").textContent = `Registrar Pago - Apto ${apto.numero}`;
   document.getElementById("modal-pago-subtitulo").textContent = apto.propietario;
 
-  const montoCuota = jornadaActiva.cuotaCobradaPorApto || 4.5;
-  document.getElementById("pago-monto-usd").value = montoCuota;
-
   const fechaHoy = new Date().toISOString().split('T')[0];
   const fechaPago = pago.fechaPago || fechaHoy;
   document.getElementById("pago-fecha").value = fechaPago;
@@ -757,17 +816,50 @@ window.openModalPago = function(aptoId) {
   const tasaFecha = pago.tasaBCV || tasasHistorial[fechaPago] || tasaBCVHoy || 911.62;
   document.getElementById("pago-tasa-bcv").value = Number(tasaFecha).toFixed(2);
 
+  const lblFijado = document.getElementById("label-pago-monto-fijado");
+  const inputUsd = document.getElementById("pago-monto-usd");
+  const inputBsFijado = document.getElementById("pago-monto-fijado-bs");
+
+  if (isBsMode) {
+    const cuotaBS = Number(pago.montoFijadoBS || jornadaActiva.cuotaCobradaPorAptoBS || 0);
+    const montoBS = pago.montoPagadoBS ? Number(pago.montoPagadoBS) : cuotaBS;
+    const realUSD = pago.equivalenteUSDReal
+      ? Number(pago.equivalenteUSDReal)
+      : (tasaFecha > 0 ? Number((montoBS / tasaFecha).toFixed(2)) : 0);
+
+    if (lblFijado) lblFijado.textContent = "Cuota Fija (Bs.)";
+    if (inputUsd) {
+      inputUsd.classList.add("hidden");
+      inputUsd.value = realUSD.toFixed(2);
+    }
+    if (inputBsFijado) {
+      inputBsFijado.classList.remove("hidden");
+      inputBsFijado.value = cuotaBS.toFixed(2);
+    }
+    document.getElementById("pago-monto-bs").value = montoBS.toFixed(2);
+    document.getElementById("pago-real-usd").value = realUSD.toFixed(2);
+  } else {
+    const montoCuota = Number(jornadaActiva.cuotaCobradaPorApto || 4.5);
+    if (lblFijado) lblFijado.textContent = "Monto Fijado ($)";
+    if (inputUsd) {
+      inputUsd.classList.remove("hidden");
+      inputUsd.value = montoCuota.toFixed(2);
+    }
+    if (inputBsFijado) {
+      inputBsFijado.classList.add("hidden");
+      inputBsFijado.value = (montoCuota * tasaFecha).toFixed(2);
+    }
+    if (pago.montoPagadoBS) {
+      document.getElementById("pago-monto-bs").value = pago.montoPagadoBS;
+      document.getElementById("pago-real-usd").value = pago.equivalenteUSDReal || montoCuota;
+    } else {
+      document.getElementById("pago-monto-bs").value = Number((montoCuota * tasaFecha).toFixed(2));
+      document.getElementById("pago-real-usd").value = montoCuota.toFixed(2);
+    }
+  }
+
   document.getElementById("pago-estado").value = pago.estadoPago || "PENDIENTE";
   document.getElementById("pago-referencia").value = pago.metodoRef || "";
-
-  if (pago.montoPagadoBS) {
-    document.getElementById("pago-monto-bs").value = pago.montoPagadoBS;
-    document.getElementById("pago-real-usd").value = pago.equivalenteUSDReal || montoCuota;
-  } else {
-    const sugeridoBS = Number((montoCuota * tasaFecha).toFixed(2));
-    document.getElementById("pago-monto-bs").value = sugeridoBS;
-    document.getElementById("pago-real-usd").value = montoCuota;
-  }
 
   const uploadPrompt = document.getElementById("comprobante-upload-prompt");
   const previewBox = document.getElementById("comprobante-preview-box");
@@ -811,12 +903,14 @@ window.revertirPagoAptoDirecto = function(aptoId) {
   const confirmar = confirm(`¿Estás seguro de REVERTIR el pago del Apartamento ${nombreApto}?\n\nEl pago volverá a estar PENDIENTE y se descontará del total recaudado.`);
   if (!confirmar) return;
 
-  const cuotaCobrada = jornadaActiva.cuotaCobradaPorApto || 4.5;
+  const cuotaCobrada = jornadaActiva.cuotaCobradaPorApto || 0;
+  const cuotaCobradaBS = jornadaActiva.cuotaCobradaPorAptoBS || 0;
   const pagoRevertido = {
     aptoId: aptoId,
     fechaPago: "",
     tasaBCV: 0,
     montoFijadoUSD: cuotaCobrada,
+    montoFijadoBS: cuotaCobradaBS,
     montoPagadoBS: 0,
     equivalenteUSDReal: 0,
     estadoPago: "PENDIENTE",
@@ -854,11 +948,23 @@ window.actualizarTasaPorFecha = function() {
 };
 
 window.calcularMontoBsSugerido = function() {
-  const cuotaUSD = parseFloat(document.getElementById("pago-monto-usd").value) || 0;
+  const isBsMode = esJornadaEnBs(jornadaActiva);
   const tasa = parseFloat(document.getElementById("pago-tasa-bcv").value) || 0;
-  if (cuotaUSD > 0 && tasa > 0) {
-    document.getElementById("pago-monto-bs").value = (cuotaUSD * tasa).toFixed(2);
-    document.getElementById("pago-real-usd").value = cuotaUSD.toFixed(2);
+
+  if (isBsMode) {
+    // En cuota fija en Bs., el monto en Bs. se mantiene fijo y se recalcula el equivalente real en $
+    const montoBS = parseFloat(document.getElementById("pago-monto-bs").value) || 0;
+    if (tasa > 0) {
+      const realUSD = (montoBS / tasa).toFixed(2);
+      document.getElementById("pago-real-usd").value = realUSD;
+      document.getElementById("pago-monto-usd").value = realUSD;
+    }
+  } else {
+    const cuotaUSD = parseFloat(document.getElementById("pago-monto-usd").value) || 0;
+    if (cuotaUSD > 0 && tasa > 0) {
+      document.getElementById("pago-monto-bs").value = (cuotaUSD * tasa).toFixed(2);
+      document.getElementById("pago-real-usd").value = cuotaUSD.toFixed(2);
+    }
   }
 };
 
@@ -866,7 +972,11 @@ window.calcularEquivalenteUsdReal = function() {
   const montoBS = parseFloat(document.getElementById("pago-monto-bs").value) || 0;
   const tasa = parseFloat(document.getElementById("pago-tasa-bcv").value) || 0;
   if (tasa > 0) {
-    document.getElementById("pago-real-usd").value = (montoBS / tasa).toFixed(2);
+    const realUSD = (montoBS / tasa).toFixed(2);
+    document.getElementById("pago-real-usd").value = realUSD;
+    if (esJornadaEnBs(jornadaActiva)) {
+      document.getElementById("pago-monto-usd").value = realUSD;
+    }
   }
 };
 
@@ -906,12 +1016,16 @@ window.guardarPago = async function(event) {
   btn.innerHTML = `<span>Guardando...</span>`;
 
   try {
+    const isBsMode = esJornadaEnBs(jornadaActiva);
     const aptoId = document.getElementById("pago-apto-id").value;
     const fecha = document.getElementById("pago-fecha").value;
     const tasa = parseFloat(document.getElementById("pago-tasa-bcv").value) || 0;
-    const montoUSD = parseFloat(document.getElementById("pago-monto-usd").value) || 0;
     const montoBS = parseFloat(document.getElementById("pago-monto-bs").value) || 0;
     const realUSD = parseFloat(document.getElementById("pago-real-usd").value) || 0;
+    const montoUSD = isBsMode ? realUSD : (parseFloat(document.getElementById("pago-monto-usd").value) || 0);
+    const montoFijadoBS = isBsMode
+      ? (parseFloat(document.getElementById("pago-monto-fijado-bs").value) || jornadaActiva.cuotaCobradaPorAptoBS || 0)
+      : Number((montoUSD * tasa).toFixed(2));
     const estado = document.getElementById("pago-estado").value;
     const referencia = document.getElementById("pago-referencia").value;
     const fileInput = document.getElementById("pago-comprobante-file");
@@ -932,6 +1046,7 @@ window.guardarPago = async function(event) {
       fechaPago: fecha,
       tasaBCV: tasa,
       montoFijadoUSD: montoUSD,
+      montoFijadoBS,
       montoPagadoBS: montoBS,
       equivalenteUSDReal: realUSD,
       estadoPago: estado,
@@ -964,6 +1079,41 @@ window.guardarPago = async function(event) {
 // ==========================================
 // 5. MODAL DE NUEVA / EDITAR JORNADA
 // ==========================================
+window.setMonedaJornadaModal = function(moneda, mantenerMargen = false) {
+  const inputMoneda = document.getElementById("jornada-moneda");
+  const btnUsd = document.getElementById("btn-moneda-usd");
+  const btnBs = document.getElementById("btn-moneda-bs");
+  const lblFactura = document.getElementById("label-jornada-factura");
+  const lblCuota = document.getElementById("label-jornada-cuota");
+  const inpNombre = document.getElementById("jornada-nombre");
+  const inpFactura = document.getElementById("jornada-monto-factura");
+  const inpCuota = document.getElementById("jornada-cuota-cobrada");
+  const inpMargen = document.getElementById("jornada-margen");
+
+  if (inputMoneda) inputMoneda.value = moneda;
+
+  if (moneda === "BS") {
+    if (btnBs) btnBs.className = "py-2 px-3 rounded-lg text-xs font-bold transition bg-white text-[#0B2247] shadow-sm";
+    if (btnUsd) btnUsd.className = "py-2 px-3 rounded-lg text-xs font-bold transition text-slate-600 hover:text-slate-900";
+    if (lblFactura) lblFactura.textContent = "Presupuesto / Factura (Bs.) *";
+    if (lblCuota) lblCuota.textContent = "Cuota Fija por Apto (Bs.) *";
+    if (inpNombre) inpNombre.placeholder = "Ej: Corte de maleza áreas verdes";
+    if (inpFactura) inpFactura.placeholder = "13000.00";
+    if (inpCuota) inpCuota.placeholder = "1000.00";
+    if (inpMargen && !mantenerMargen) inpMargen.value = "0.0";
+  } else {
+    if (btnUsd) btnUsd.className = "py-2 px-3 rounded-lg text-xs font-bold transition bg-white text-[#0B2247] shadow-sm";
+    if (btnBs) btnBs.className = "py-2 px-3 rounded-lg text-xs font-bold transition text-slate-600 hover:text-slate-900";
+    if (lblFactura) lblFactura.textContent = "Factura Proveedor ($) *";
+    if (lblCuota) lblCuota.textContent = "Cuota por Apartamento ($) *";
+    if (inpNombre) inpNombre.placeholder = "Ej: Bolsas de Basura, Poda de Áreas Comunes";
+    if (inpFactura) inpFactura.placeholder = "55.00";
+    if (inpCuota) inpCuota.placeholder = "4.50";
+    if (inpMargen && !mantenerMargen) inpMargen.value = "5.0";
+  }
+  recalcularCuotaJornadaModal();
+};
+
 window.openModalNuevaJornada = function() {
   document.getElementById("modal-jornada-titulo").textContent = "Crear Nueva Jornada de Recaudación";
   document.getElementById("jornada-id").value = "";
@@ -982,20 +1132,31 @@ window.openModalNuevaJornada = function() {
   proxSemana.setDate(proxSemana.getDate() + 7);
   document.getElementById("jornada-fecha-fin").value = proxSemana.toISOString().split('T')[0];
 
+  setMonedaJornadaModal("USD");
   document.getElementById("modal-jornada").classList.remove("hidden");
 };
 
 window.openModalEditarJornada = function() {
   if (!jornadaActiva) return;
+  const isBsMode = esJornadaEnBs(jornadaActiva);
+
   document.getElementById("modal-jornada-titulo").textContent = "Editar Parámetros de la Jornada";
   document.getElementById("jornada-id").value = jornadaActiva.id;
   document.getElementById("jornada-nombre").value = jornadaActiva.nombre || "";
-  document.getElementById("jornada-monto-factura").value = jornadaActiva.montoFactura || "";
   document.getElementById("jornada-num-aptos").value = jornadaActiva.numAptos || apartamentosList.length;
-  document.getElementById("jornada-margen").value = jornadaActiva.margenProteccion || 5.0;
-  document.getElementById("jornada-cuota-cobrada").value = jornadaActiva.cuotaCobradaPorApto || "";
+  document.getElementById("jornada-margen").value = jornadaActiva.margenProteccion ?? (isBsMode ? 0.0 : 5.0);
   document.getElementById("jornada-fecha-inicio").value = jornadaActiva.fechaInicio || "";
   document.getElementById("jornada-fecha-fin").value = jornadaActiva.fechaFin || "";
+
+  setMonedaJornadaModal(isBsMode ? "BS" : "USD", true);
+
+  document.getElementById("jornada-monto-factura").value = isBsMode
+    ? (jornadaActiva.montoFacturaBS || "")
+    : (jornadaActiva.montoFactura || "");
+  document.getElementById("jornada-cuota-cobrada").value = isBsMode
+    ? (jornadaActiva.cuotaCobradaPorAptoBS || "")
+    : (jornadaActiva.cuotaCobradaPorApto || "");
+
   document.getElementById("modal-jornada").classList.remove("hidden");
 };
 
@@ -1017,13 +1178,21 @@ window.recalcularCuotaJornadaModal = function() {
 window.guardarJornada = async function(event) {
   event.preventDefault();
   const idExistente = document.getElementById("jornada-id").value;
+  const monedaJornada = document.getElementById("jornada-moneda").value || "USD";
+  const isBsMode = monedaJornada === "BS";
   const nombre = document.getElementById("jornada-nombre").value;
-  const factura = parseFloat(document.getElementById("jornada-monto-factura").value) || 0;
+  const rawFactura = parseFloat(document.getElementById("jornada-monto-factura").value) || 0;
   const numAptos = parseInt(document.getElementById("jornada-num-aptos").value, 10) || 13;
   const margen = parseFloat(document.getElementById("jornada-margen").value) || 0;
-  const cuotaCobrada = parseFloat(document.getElementById("jornada-cuota-cobrada").value) || 0;
+  const rawCuota = parseFloat(document.getElementById("jornada-cuota-cobrada").value) || 0;
   const fechaInicio = document.getElementById("jornada-fecha-inicio").value;
   const fechaFin = document.getElementById("jornada-fecha-fin").value;
+  const tasaRef = tasaBCVHoy || 911.62;
+
+  const montoFactura = isBsMode ? Number((rawFactura / tasaRef).toFixed(2)) : rawFactura;
+  const montoFacturaBS = isBsMode ? rawFactura : Number((rawFactura * tasaRef).toFixed(2));
+  const cuotaCobrada = isBsMode ? Number((rawCuota / tasaRef).toFixed(2)) : rawCuota;
+  const cuotaCobradaBS = isBsMode ? rawCuota : Number((rawCuota * tasaRef).toFixed(2));
 
   try {
     if (idExistente) {
@@ -1043,15 +1212,21 @@ window.guardarJornada = async function(event) {
           metodoRef: "",
           comprobanteUrl: ""
         };
-        if (p.estadoPago !== "PAGADO") p.montoFijadoUSD = cuotaCobrada;
+        if (p.estadoPago !== "PAGADO") {
+          p.montoFijadoUSD = cuotaCobrada;
+          p.montoFijadoBS = cuotaCobradaBS;
+        }
         pagosActualizados[apt.id] = p;
       });
 
       jornadaActiva.nombre = nombre;
-      jornadaActiva.montoFactura = factura;
+      jornadaActiva.monedaJornada = monedaJornada;
+      jornadaActiva.montoFactura = montoFactura;
+      jornadaActiva.montoFacturaBS = montoFacturaBS;
       jornadaActiva.numAptos = numAptos;
       jornadaActiva.margenProteccion = margen;
       jornadaActiva.cuotaCobradaPorApto = cuotaCobrada;
+      jornadaActiva.cuotaCobradaPorAptoBS = cuotaCobradaBS;
       jornadaActiva.fechaInicio = fechaInicio;
       jornadaActiva.fechaFin = fechaFin;
       jornadaActiva.pagos = pagosActualizados;
@@ -1062,8 +1237,9 @@ window.guardarJornada = async function(event) {
 
       if (db) {
         db.collection("jornadas").doc(idExistente).update({
-          nombre, montoFactura: factura, numAptos, margenProteccion: margen,
-          cuotaCobradaPorApto: cuotaCobrada, fechaInicio, fechaFin,
+          nombre, monedaJornada, montoFactura, montoFacturaBS, numAptos,
+          margenProteccion: margen, cuotaCobradaPorApto: cuotaCobrada,
+          cuotaCobradaPorAptoBS: cuotaCobradaBS, fechaInicio, fechaFin,
           pagos: pagosActualizados, updatedAt: new Date().toISOString()
         }).catch(e => console.warn(e));
       }
@@ -1080,6 +1256,7 @@ window.guardarJornada = async function(event) {
           fechaPago: "",
           tasaBCV: 0,
           montoFijadoUSD: cuotaCobrada,
+          montoFijadoBS: cuotaCobradaBS,
           montoPagadoBS: 0,
           equivalenteUSDReal: 0,
           estadoPago: "PENDIENTE",
@@ -1091,11 +1268,14 @@ window.guardarJornada = async function(event) {
       const nuevaJornada = {
         id: idNueva,
         nombre,
-        montoFactura: factura,
+        monedaJornada,
+        montoFactura,
+        montoFacturaBS,
         numAptos,
         margenProteccion: margen,
         cuotaCobradaPorApto: cuotaCobrada,
-        tasaCierreProyectada: tasaBCVHoy || 911.62,
+        cuotaCobradaPorAptoBS: cuotaCobradaBS,
+        tasaCierreProyectada: tasaRef,
         fechaInicio,
         fechaFin,
         pagos,
@@ -1573,14 +1753,29 @@ window.cerrarVisorImg = function() {
 
 window.exportarJornadaCSV = function() {
   if (!jornadaActiva) return;
+  const isBsMode = esJornadaEnBs(jornadaActiva);
   const pagos = jornadaActiva.pagos || {};
   const aptos = apartamentosList.length > 0 ? apartamentosList : APARTAMENTOS_INICIALES;
 
-  const headers = ["Apartamento", "Propietario", "Fecha Pago", "Tasa BCV", "Monto Fijado (USD)", "Pagado (Bs.)", "Equivalente (USD)", "Estado", "Referencia"];
+  const headers = [
+    "Apartamento",
+    "Propietario",
+    "Fecha Pago",
+    "Tasa BCV",
+    isBsMode ? "Cuota Fija (Bs.)" : "Monto Fijado (USD)",
+    "Pagado (Bs.)",
+    "Equivalente (USD)",
+    "Estado",
+    "Referencia"
+  ];
+
   const filas = aptos.map(apt => {
     const p = pagos[apt.id] || {};
     const isPagado = p.estadoPago === "PAGADO";
-    const fijado = (isPagado && p.montoFijadoUSD) ? Number(p.montoFijadoUSD) : Number(jornadaActiva.cuotaCobradaPorApto || 0);
+    const fijado = isBsMode
+      ? ((isPagado && p.montoFijadoBS) ? Number(p.montoFijadoBS) : Number(jornadaActiva.cuotaCobradaPorAptoBS || 0))
+      : ((isPagado && p.montoFijadoUSD) ? Number(p.montoFijadoUSD) : Number(jornadaActiva.cuotaCobradaPorApto || 0));
+
     return [
       apt.numero,
       `"${(apt.propietario || "").replace(/"/g, '""')}"`,
@@ -1607,6 +1802,7 @@ window.exportarJornadaCSV = function() {
 
 window.marcarTodosRecordatorio = function() {
   if (!jornadaActiva) return;
+  const isBsMode = esJornadaEnBs(jornadaActiva);
   const pagos = jornadaActiva.pagos || {};
   const aptos = apartamentosList.length > 0 ? apartamentosList : APARTAMENTOS_INICIALES;
   const pendientes = aptos.filter(a => (pagos[a.id]?.estadoPago || "PENDIENTE") === "PENDIENTE");
@@ -1616,9 +1812,12 @@ window.marcarTodosRecordatorio = function() {
     return;
   }
 
+  const textoCuota = isBsMode
+    ? `Cuota fija por apartamento: ${formatBS(jornadaActiva.cuotaCobradaPorAptoBS || 0)}`
+    : `Cuota por apartamento: ${formatUSD(jornadaActiva.cuotaCobradaPorApto)}\nTasa oficial BCV: ${document.getElementById("header-bcv-rate").innerText}`;
+
   const texto = "📢 *RECORDATORIO DE COBRANZA - " + jornadaActiva.nombre.toUpperCase() + "*\n" +
-    "Cuota por apartamento: " + formatUSD(jornadaActiva.cuotaCobradaPorApto) + "\n" +
-    "Tasa oficial BCV: " + document.getElementById("header-bcv-rate").innerText + "\n\n" +
+    textoCuota + "\n\n" +
     "*Apartamentos pendientes (" + pendientes.length + "):*\n" +
     pendientes.map(a => "• " + a.numero + " - " + a.propietario).join("\n");
 
